@@ -24,5 +24,8 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Editor
+.vscode/
+
 # Misc
 .DS_Store
