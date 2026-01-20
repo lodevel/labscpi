@@ -1,0 +1,18 @@
+{
+  "driver_version": "0.5.0",
+  "rules_version": "0.5.0",
+  "files": [
+    {
+      "name": "SCPI_Electronic_Load_API_Contract_v1.md",
+      "sha256": "85fa7523f1095a41df4920500f714b722e663e0eda6ddd12500c14a1fe637e05"
+    },
+    {
+      "name": "SCPI_Oscilloscope_API_Contract_v2.md",
+      "sha256": "5a629db68af0897e51f1be9df3821278f37bef710034084741647ceceb24b427"
+    },
+    {
+      "name": "SCPI_PSU_API_Contract_v1.md",
+      "sha256": "65344758a66bd05e8c2de47ec8ab1ebe466fc62eacd5f97a39b79b2665f16ab8"
+    }
+  ]
+}

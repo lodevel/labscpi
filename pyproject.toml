@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labscpi"
+version = "0.2.0"
+description = "Brand-agnostic SCPI drivers for scopes, PSUs, and e-loads."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Adrien Lombet" }]
+requires-python = ">=3.10"
+dependencies = [
+  "PyVISA>=1.15",
+  "PyVISA-py>=0.8",
+  "pyserial>=3.5",
+  "PyYAML>=6.0",
+  "iso8601>=2.0"
+]
+
+[project.urls]
+Homepage = "https://example.invalid/labscpi"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ship PEP 561 marker
+[tool.setuptools.package-data]
+labscpi = [
+  "py.typed",
+  "rules/*/*",          # e.g. rules/0.1.0/*.*
+  "rules_index.json"    # default selector
+]
