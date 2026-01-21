@@ -489,6 +489,11 @@ class TTICPX200DPAdapter(BrandAdapter):
     brand = "Aim-TTi"
     vendor_aliases = ("TTI", "Aim")
 
+    def startup(self) -> None:
+        """Disable error checking - CPX200DP doesn't support SYST:ERR?"""
+        self.s.check_errors = False
+        super().startup()
+
     def _sel(self, ch: int) -> None:
         # CPX200DP is dual-output (channels 1-2 only)
         # Commands include channel number directly, no selection needed
@@ -1089,18 +1094,71 @@ class MockResourceManager:
 # Simple self-test when run as a script
 # ---------------------------
 if __name__ == "__main__":
+    import sys
+    import json
+    
     logging.basicConfig(level=logging.DEBUG)
-    mock_rm = MockResourceManager()
-    psu = PowerSupply("MOCK::INSTR", rm=mock_rm, timeout_ms=2000)
-    psu.connect()
-    psu.initialize() 
-    print("ID:", psu.identity)
-    psu.set_voltage(1, 5.0)
-    psu.set_current(1, 0.5)
-    psu.output(1, True)
-    print("V=", psu.measure_voltage(1), "I=", psu.measure_current(1))
-    psu.set_timeout(1000)
+    
+    # Require VISA address argument
+    if len(sys.argv) < 2:
+        print("ERROR: VISA address required")
+        print("\nUsage: python psu_scpi.py <VISA_ADDRESS>")
+        print("Examples:")
+        print("  python psu_scpi.py ASRL5::INSTR")
+        print("  python psu_scpi.py USB0::0x1AB1::0x0E11::DP8C123456::INSTR")
+        print("  python psu_scpi.py TCPIP0::192.168.1.10::INSTR")
+        sys.exit(1)
+    
+    visa_addr = sys.argv[1]
+    print(f"Connecting to instrument: {visa_addr}")
+    
+    try:
+        # Real hardware mode with 2s timeout
+        psu = PowerSupply(visa_addr, timeout_ms=2000)
+        psu.connect()
+        
+        # Configure serial if ASRL address
+        if visa_addr.upper().startswith("ASRL"):
+            print("Configuring serial parameters (9600 8N1)...")
+            try:
+                import pyvisa.constants as c
+                psu.configure_serial(
+                    baud=9600, 
+                    data_bits=8, 
+                    stop_bits=c.StopBits.one,
+                    parity=c.Parity.none
+                )
+            except Exception:
+                # Fallback: some backends accept integer values
+                psu.configure_serial(baud=9600, data_bits=8)
+        
+        psu.initialize()
+        
+    except ImportError as e:
+        print(f"ERROR: PyVISA not installed. Please run: pip install pyvisa")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to connect to {visa_addr}")
+        print(f"  {type(e).__name__}: {e}")
+        print("\nTroubleshooting:")
+        print("  - Check that the VISA address is correct")
+        print("  - Ensure the instrument is powered on and connected")
+        print("  - Verify VISA drivers are installed (NI-VISA, pyvisa-py, etc.)")
+        sys.exit(1)
+    
+    print("=" * 60)
+    print(f"Identity: {psu.identity}")
+    print("=" * 60)
+    
+    # Run comprehensive selftest
+    print("\nRunning selftest_interface on channel 1...\n")
+    results = psu.selftest_interface(channels=(1,))
+    
+    # Display results as formatted JSON
+    print(json.dumps(results, indent=2))
+    
     psu.close()
+    print("\nConnection closed.")
 
 
 
