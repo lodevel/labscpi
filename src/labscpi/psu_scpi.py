@@ -482,6 +482,81 @@ class RohdeSchwarzAdapter(BrandAdapter):
             super().output(ch, on)
 
 
+@BrandAdapter.register_model
+class TTICPX200DPAdapter(BrandAdapter):
+    """TTI CPX200DP model-specific adapter using simplified command set."""
+    MODEL_PATTERNS = (re.compile(r"CPX200DP", re.I),)
+    brand = "Aim-TTi"
+    vendor_aliases = ("TTI", "Aim")
+
+    def _sel(self, ch: int) -> None:
+        # CPX200DP is dual-output (channels 1-2 only)
+        # Commands include channel number directly, no selection needed
+        if ch < 1 or ch > 2:
+            raise ChannelError("CPX200DP supports channels 1-2 only")
+
+    def output(self, ch: int, on: bool) -> None:
+        # CPX200DP uses OP{ch} 1/0 syntax
+        self._sel(ch)  # Validate channel only
+        self.s.write(f"OP{ch} {1 if on else 0}")
+        # Verify state
+        st = self._get_ch_out_state(ch)
+        if st is not None and st != on:
+            raise SCPIError("Per-channel output state did not match requested value")
+
+    def _get_ch_out_state(self, ch: int) -> Optional[bool]:
+        # Query with OP{ch}? returns 1 or 0
+        try:
+            resp = self.s.query(f"OP{ch}?")
+            return self._parse_bool(resp)
+        except Exception:
+            return None
+
+    def set_voltage(self, ch: int, volts: float) -> None:
+        # CPX200DP uses V{ch} {value} syntax
+        self._sel(ch)  # Validate channel only
+        self.s.write(f"V{ch} {volts:.3f}")
+
+    def set_current(self, ch: int, amps: float) -> None:
+        # CPX200DP uses I{ch} {value} syntax
+        self._sel(ch)  # Validate channel only
+        self.s.write(f"I{ch} {amps:.3f}")
+
+    def get_voltage_config(self, ch: int) -> float:
+        # Query V{ch}? returns "V{ch} {value}" format
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"V{ch}?")
+        # Response format: "V1 5.00" - strip prefix and parse number
+        parts = resp.strip().split()
+        if len(parts) >= 2:
+            return _parse_number(parts[1])
+        return _parse_number(resp)
+
+    def get_current_config(self, ch: int) -> float:
+        # Query I{ch}? returns "I{ch} {value}" format
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"I{ch}?")
+        # Response format: "I1 1.00" - strip prefix and parse number
+        parts = resp.strip().split()
+        if len(parts) >= 2:
+            return _parse_number(parts[1])
+        return _parse_number(resp)
+
+    def measure_voltage(self, ch: int) -> float:
+        # Query V{ch}O? returns value with unit suffix like "4.994V"
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"V{ch}O?")
+        # Response format: "4.994V" - strip trailing 'V' and parse
+        return _parse_number(resp.rstrip('Vv'))
+
+    def measure_current(self, ch: int) -> float:
+        # Query I{ch}O? returns value with unit suffix like "0.500A"
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"I{ch}O?")
+        # Response format: "0.500A" - strip trailing 'A' and parse
+        return _parse_number(resp.rstrip('Aa'))
+
+
 class AimTTiAdapter(BrandAdapter):
     brand = "Aim-TTi"
     vendor_aliases = ("TTI","Aim")
@@ -594,6 +669,7 @@ class EA9080Adapter(EAAdapter):
 ADAPTERS: Tuple[Type[BaseAdapter], ...] = (
     RigolAdapter,
     RohdeSchwarzAdapter,
+    TTICPX200DPAdapter,  # Model-specific TTI adapter
     AimTTiAdapter,
     EAAdapter,
     BaseAdapter,  # fallback generic
