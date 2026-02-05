@@ -482,6 +482,86 @@ class RohdeSchwarzAdapter(BrandAdapter):
             super().output(ch, on)
 
 
+@BrandAdapter.register_model
+class TTICPX200DPAdapter(BrandAdapter):
+    """TTI CPX200DP model-specific adapter using simplified command set."""
+    MODEL_PATTERNS = (re.compile(r"CPX200DP", re.I),)
+    brand = "Aim-TTi"
+    vendor_aliases = ("TTI", "Aim")
+
+    def startup(self) -> None:
+        """Disable error checking - CPX200DP doesn't support SYST:ERR?"""
+        self.s.check_errors = False
+        super().startup()
+
+    def _sel(self, ch: int) -> None:
+        # CPX200DP is dual-output (channels 1-2 only)
+        # Commands include channel number directly, no selection needed
+        if ch < 1 or ch > 2:
+            raise ChannelError("CPX200DP supports channels 1-2 only")
+
+    def output(self, ch: int, on: bool) -> None:
+        # CPX200DP uses OP{ch} 1/0 syntax
+        self._sel(ch)  # Validate channel only
+        self.s.write(f"OP{ch} {1 if on else 0}")
+        # Verify state
+        st = self._get_ch_out_state(ch)
+        if st is not None and st != on:
+            raise SCPIError("Per-channel output state did not match requested value")
+
+    def _get_ch_out_state(self, ch: int) -> Optional[bool]:
+        # Query with OP{ch}? returns 1 or 0
+        try:
+            resp = self.s.query(f"OP{ch}?")
+            return self._parse_bool(resp)
+        except Exception:
+            return None
+
+    def set_voltage(self, ch: int, volts: float) -> None:
+        # CPX200DP uses V{ch} {value} syntax
+        self._sel(ch)  # Validate channel only
+        self.s.write(f"V{ch} {volts:.3f}")
+
+    def set_current(self, ch: int, amps: float) -> None:
+        # CPX200DP uses I{ch} {value} syntax
+        self._sel(ch)  # Validate channel only
+        self.s.write(f"I{ch} {amps:.3f}")
+
+    def get_voltage_config(self, ch: int) -> float:
+        # Query V{ch}? returns "V{ch} {value}" format
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"V{ch}?")
+        # Response format: "V1 5.00" - strip prefix and parse number
+        parts = resp.strip().split()
+        if len(parts) >= 2:
+            return _parse_number(parts[1])
+        return _parse_number(resp)
+
+    def get_current_config(self, ch: int) -> float:
+        # Query I{ch}? returns "I{ch} {value}" format
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"I{ch}?")
+        # Response format: "I1 1.00" - strip prefix and parse number
+        parts = resp.strip().split()
+        if len(parts) >= 2:
+            return _parse_number(parts[1])
+        return _parse_number(resp)
+
+    def measure_voltage(self, ch: int) -> float:
+        # Query V{ch}O? returns value with unit suffix like "4.994V"
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"V{ch}O?")
+        # Response format: "4.994V" - strip trailing 'V' and parse
+        return _parse_number(resp.rstrip('Vv'))
+
+    def measure_current(self, ch: int) -> float:
+        # Query I{ch}O? returns value with unit suffix like "0.500A"
+        self._sel(ch)  # Validate channel only
+        resp = self.s.query(f"I{ch}O?")
+        # Response format: "0.500A" - strip trailing 'A' and parse
+        return _parse_number(resp.rstrip('Aa'))
+
+
 class AimTTiAdapter(BrandAdapter):
     brand = "Aim-TTi"
     vendor_aliases = ("TTI","Aim")
@@ -594,6 +674,7 @@ class EA9080Adapter(EAAdapter):
 ADAPTERS: Tuple[Type[BaseAdapter], ...] = (
     RigolAdapter,
     RohdeSchwarzAdapter,
+    TTICPX200DPAdapter,  # Model-specific TTI adapter
     AimTTiAdapter,
     EAAdapter,
     BaseAdapter,  # fallback generic
@@ -1013,18 +1094,71 @@ class MockResourceManager:
 # Simple self-test when run as a script
 # ---------------------------
 if __name__ == "__main__":
+    import sys
+    import json
+    
     logging.basicConfig(level=logging.DEBUG)
-    mock_rm = MockResourceManager()
-    psu = PowerSupply("MOCK::INSTR", rm=mock_rm, timeout_ms=2000)
-    psu.connect()
-    psu.initialize() 
-    print("ID:", psu.identity)
-    psu.set_voltage(1, 5.0)
-    psu.set_current(1, 0.5)
-    psu.output(1, True)
-    print("V=", psu.measure_voltage(1), "I=", psu.measure_current(1))
-    psu.set_timeout(1000)
+    
+    # Require VISA address argument
+    if len(sys.argv) < 2:
+        print("ERROR: VISA address required")
+        print("\nUsage: python psu_scpi.py <VISA_ADDRESS>")
+        print("Examples:")
+        print("  python psu_scpi.py ASRL5::INSTR")
+        print("  python psu_scpi.py USB0::0x1AB1::0x0E11::DP8C123456::INSTR")
+        print("  python psu_scpi.py TCPIP0::192.168.1.10::INSTR")
+        sys.exit(1)
+    
+    visa_addr = sys.argv[1]
+    print(f"Connecting to instrument: {visa_addr}")
+    
+    try:
+        # Real hardware mode with 2s timeout
+        psu = PowerSupply(visa_addr, timeout_ms=2000)
+        psu.connect()
+        
+        # Configure serial if ASRL address
+        if visa_addr.upper().startswith("ASRL"):
+            print("Configuring serial parameters (9600 8N1)...")
+            try:
+                import pyvisa.constants as c
+                psu.configure_serial(
+                    baud=9600, 
+                    data_bits=8, 
+                    stop_bits=c.StopBits.one,
+                    parity=c.Parity.none
+                )
+            except Exception:
+                # Fallback: some backends accept integer values
+                psu.configure_serial(baud=9600, data_bits=8)
+        
+        psu.initialize()
+        
+    except ImportError as e:
+        print(f"ERROR: PyVISA not installed. Please run: pip install pyvisa")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to connect to {visa_addr}")
+        print(f"  {type(e).__name__}: {e}")
+        print("\nTroubleshooting:")
+        print("  - Check that the VISA address is correct")
+        print("  - Ensure the instrument is powered on and connected")
+        print("  - Verify VISA drivers are installed (NI-VISA, pyvisa-py, etc.)")
+        sys.exit(1)
+    
+    print("=" * 60)
+    print(f"Identity: {psu.identity}")
+    print("=" * 60)
+    
+    # Run comprehensive selftest
+    print("\nRunning selftest_interface on channel 1...\n")
+    results = psu.selftest_interface(channels=(1,))
+    
+    # Display results as formatted JSON
+    print(json.dumps(results, indent=2))
+    
     psu.close()
+    print("\nConnection closed.")
 
 
 
