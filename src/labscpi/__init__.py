@@ -1,4 +1,4 @@
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __rules_version__ = "0.5.0"
 
 from .oscilloscope_scpi import (
